@@ -149,7 +149,11 @@ class NetworkModuleOFT(network.NetworkModule):
             if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
                 orig_weight=orig_weight.permute(1, 0)
 
-            R = self.oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+            m_I = torch.eye(self.block_size, device=orig_weight.device)
+            oft_blocks = self.oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+            oft_blocks = oft_blocks - oft_blocks.transpose(1, 2)
+            #oft_blocks = torch.matmul(m_I + oft_blocks, (m_I - oft_blocks).inverse())
+            R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
             # if self.is_kohya:
             #     #R = R.transpose(1, 0)
             #     R = self.get_weight(self.oft_blocks, multiplier)
@@ -157,7 +161,10 @@ class NetworkModuleOFT(network.NetworkModule):
             #if self.is_kohya:
             #    R = R * multiplier + torch.eye(self.num_blocks, device=orig_weight.device)
             #else:
-            R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
+            R = R * multiplier + m_I
+            #R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
+            #if self.is_kohya:
+            #    R = torch.matmul(m_I + R, (m_I - R).inverse())
 
             merged_weight = torch.einsum(
                 'k n m, k n ... -> k m ...',
