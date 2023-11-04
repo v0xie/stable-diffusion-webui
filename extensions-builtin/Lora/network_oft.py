@@ -67,7 +67,7 @@ class NetworkModuleOFT(network.NetworkModule):
         if is_other_linear:
             self.lin_module = self.create_module(weights.w, "oft_diag", none_ok=True)
 
-    
+
     def create_module(self, weights, key, none_ok=False):
         weight = weights.get(key)
 
@@ -146,26 +146,18 @@ class NetworkModuleOFT(network.NetworkModule):
         is_other_linear = type(self.sd_module) in [torch.nn.MultiheadAttention]
 
         if not is_other_linear:
-            if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
-                orig_weight=orig_weight.permute(1, 0)
+            #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
+            #    orig_weight=orig_weight.permute(1, 0)
 
-            m_I = torch.eye(self.block_size, device=orig_weight.device)
             oft_blocks = self.oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
-            oft_blocks = oft_blocks - oft_blocks.transpose(1, 2)
-            #oft_blocks = torch.matmul(m_I + oft_blocks, (m_I - oft_blocks).inverse())
-            R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
-            # if self.is_kohya:
-            #     #R = R.transpose(1, 0)
-            #     R = self.get_weight(self.oft_blocks, multiplier)
-            merged_weight = rearrange(orig_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
-            #if self.is_kohya:
-            #    R = R * multiplier + torch.eye(self.num_blocks, device=orig_weight.device)
-            #else:
-            R = R * multiplier + m_I
-            #R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
-            #if self.is_kohya:
-            #    R = torch.matmul(m_I + R, (m_I - R).inverse())
 
+            # without this line the results are significantly worse / less accurate
+            oft_blocks = oft_blocks - oft_blocks.transpose(1, 2)
+
+            R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+            R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
+
+            merged_weight = rearrange(orig_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
             merged_weight = torch.einsum(
                 'k n m, k n ... -> k m ...',
                 R,
@@ -173,8 +165,8 @@ class NetworkModuleOFT(network.NetworkModule):
             )
             merged_weight = rearrange(merged_weight, 'k m ... -> (k m) ...')
 
-            if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
-                orig_weight=orig_weight.permute(1, 0)
+            #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
+            #    orig_weight=orig_weight.permute(1, 0)
 
             updown = merged_weight.to(orig_weight.device, dtype=orig_weight.dtype) - orig_weight
             output_shape = orig_weight.shape
