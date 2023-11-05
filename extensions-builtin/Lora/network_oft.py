@@ -124,10 +124,47 @@ class NetworkModuleOFT(network.NetworkModule):
             updown = merged_weight.to(orig_weight.device, dtype=orig_weight.dtype) - orig_weight
             output_shape = orig_weight.shape
         else:
+            oft_blocks = self.oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+
+            # without this line the results are significantly worse / less accurate
+            oft_blocks = oft_blocks - oft_blocks.transpose(1, 2)
+
+            R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+            R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
+
+            in_proj_weight_q = self.sd_module.in_proj_weight[0:1280, :]
+            in_proj_weight_k = self.sd_module.in_proj_weight[1280:2560, :]
+            in_proj_weight_v = self.sd_module.in_proj_weight[2560:3840, :]
+
+            if '_q' in self.sd_key:
+                merged_weight = in_proj_weight_q
+            elif '_k' in self.sd_key:
+                merged_weight = in_proj_weight_k
+            elif '_v' in self.sd_key:
+                merged_weight = in_proj_weight_v
+            else:
+                merged_weight = orig_weight
+
+
+            merged_weight = rearrange(merged_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
+            merged_weight = torch.einsum(
+                'k n m, k n ... -> k m ...',
+                R,
+                merged_weight
+            )
+            merged_weight = rearrange(merged_weight, 'k m ... -> (k m) ...')
+
+            #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
+            #    orig_weight=orig_weight.permute(1, 0)
+
+            updown = merged_weight.to(orig_weight.device, dtype=orig_weight.dtype)
+            #output_shape = orig_weight.shape
+            #output_shape = orig_weight.shape
             # FIXME: skip MultiheadAttention for now
             #up = self.lin_module.weight.to(orig_weight.device, dtype=orig_weight.dtype)
-            updown = torch.zeros([orig_weight.shape[1], orig_weight.shape[1]], device=orig_weight.device, dtype=orig_weight.dtype)
+            #updown = torch.zeros([orig_weight.shape[1], orig_weight.shape[1]], device=orig_weight.device, dtype=orig_weight.dtype)
             output_shape = (orig_weight.shape[1], orig_weight.shape[1])
+            return updown, None 
 
         return self.finalize_updown(updown, orig_weight, output_shape)
 
