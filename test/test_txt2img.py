@@ -27,6 +27,8 @@ def simple_txt2img_request():
         "s_noise": 1,
         "s_tmax": 0,
         "s_tmin": 0,
+        "s_es_k": 0,
+        "s_es_b": 1,
         "sampler_index": "Euler a",
         "seed": -1,
         "seed_resize_from_h": -1,

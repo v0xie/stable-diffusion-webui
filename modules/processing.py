@@ -149,6 +149,8 @@ class StableDiffusionProcessing:
     s_tmax: float = None
     s_tmin: float = None
     s_noise: float = None
+    s_es_k: float = None
+    s_es_b: float = None
     override_settings: dict[str, Any] = None
     override_settings_restore_afterwards: bool = True
     sampler_index: int = None
@@ -217,6 +219,8 @@ class StableDiffusionProcessing:
         self.s_tmin = self.s_tmin if self.s_tmin is not None else opts.s_tmin
         self.s_tmax = (self.s_tmax if self.s_tmax is not None else opts.s_tmax) or float('inf')
         self.s_noise = self.s_noise if self.s_noise is not None else opts.s_noise
+        self.s_es_k = self.s_es_k if self.s_es_k is not None else opts.s_es_k
+        self.s_es_b = self.s_es_b if self.s_es_b is not None else opts.s_es_b
 
         self.extra_generation_params = self.extra_generation_params or {}
         self.override_settings = self.override_settings or {}
@@ -521,6 +525,8 @@ class Processed:
         self.s_tmax = p.s_tmax
         self.s_noise = p.s_noise
         self.s_min_uncond = p.s_min_uncond
+        self.s_es_k = p.s_es_k
+        self.s_es_b = p.s_es_b
         self.sampler_noise_scheduler_override = p.sampler_noise_scheduler_override
         self.prompt = self.prompt if not isinstance(self.prompt, list) else self.prompt[0]
         self.negative_prompt = self.negative_prompt if not isinstance(self.negative_prompt, list) else self.negative_prompt[0]

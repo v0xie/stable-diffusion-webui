@@ -135,3 +135,41 @@ def unipc(model, x, timesteps, extra_args=None, callback=None, disable=None, is_
     x = unipc_sampler.sample(x, steps=len(timesteps), t_start=t_start, skip_type=shared.opts.uni_pc_skip_type, method="multistep", order=shared.opts.uni_pc_order, lower_order_final=shared.opts.uni_pc_lower_order_final)
 
     return x
+
+# ELUCIDATING THE EXPOSURE BIAS IN DIFFUSION MODELS
+# epsilon scaling
+# 2023, Authors:
+@torch.no_grad()
+def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, eta=0.0):
+    alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
+    alphas = alphas_cumprod[timesteps]
+    alphas_prev = alphas_cumprod[torch.nn.functional.pad(timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
+    sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
+    sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
+
+    k = 0.0002
+    b = 1.0041
+
+    extra_args = {} if extra_args is None else extra_args
+    s_in = x.new_ones((x.shape[0]))
+    s_x = x.new_ones((x.shape[0], 1, 1, 1))
+    for i in tqdm.trange(len(timesteps) - 1, disable=disable):
+        index = len(timesteps) - 1 - i
+
+        lambda_t = k*i + b
+        e_t = model(x, timesteps[index].item() * s_in, **extra_args)
+
+        a_t = alphas[index].item() * s_x
+        a_prev = alphas_prev[index].item() * s_x
+        sigma_t = sigmas[index].item() * s_x
+        sqrt_one_minus_at = sqrt_one_minus_alphas[index].item() * s_x # 1 - a_t
+
+        pred_x0 = (x - sqrt_one_minus_at * (e_t / lambda_t)) / a_t.sqrt() # predicted x_0
+        dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t # direction pointing to x_t
+        noise = sigma_t * k_diffusion.sampling.torch.randn_like(x) # noise
+        x = a_prev.sqrt() * pred_x0 + dir_xt + noise # x_(t-1) | x_t, x_t(0)
+
+        if callback is not None:
+            callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
+
+    return x

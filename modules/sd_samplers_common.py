@@ -230,6 +230,8 @@ class Sampler:
         self.s_tmin = 0.0
         self.s_tmax = float('inf')
         self.s_noise = 1.0
+        self.s_es_k = 0.0
+        self.s_es_b = 1.0
 
         self.eta_option_field = 'eta_ancestral'
         self.eta_infotext_field = 'Eta'
@@ -300,6 +302,8 @@ class Sampler:
             s_tmin = getattr(opts, 's_tmin', p.s_tmin)
             s_tmax = getattr(opts, 's_tmax', p.s_tmax) or self.s_tmax # 0 = inf
             s_noise = getattr(opts, 's_noise', p.s_noise)
+            s_es_k = getattr(opts, 's_es_k', p.s_es_k)
+            s_es_b = getattr(opts, 's_es_b', p.s_es_b)
 
             if 's_churn' in extra_params_kwargs and s_churn != self.s_churn:
                 extra_params_kwargs['s_churn'] = s_churn
@@ -317,6 +321,14 @@ class Sampler:
                 extra_params_kwargs['s_noise'] = s_noise
                 p.s_noise = s_noise
                 p.extra_generation_params['Sigma noise'] = s_noise
+            if 's_es_k' in extra_params_kwargs and s_es_k != self.s_es_k:
+                extra_params_kwargs['s_es_k'] = s_es_k
+                p.s_es_k = s_es_k
+                p.extra_generation_params['Epsilon scaling k'] = s_es_k
+            if 's_es_b' in extra_params_kwargs and s_es_b != self.s_es_b:
+                extra_params_kwargs['s_es_b'] = s_es_b
+                p.s_es_b = s_es_b
+                p.extra_generation_params['Epsilon scaling b'] = s_es_b
 
         return extra_params_kwargs
 

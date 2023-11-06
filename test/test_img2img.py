@@ -34,6 +34,8 @@ def simple_img2img_request(img2img_basic_image_base64):
         "s_noise": 1,
         "s_tmax": 0,
         "s_tmin": 0,
+        "s_es_k": 0,
+        "s_es_b": 1,
         "sampler_index": "Euler a",
         "seed": -1,
         "seed_resize_from_h": -1,
