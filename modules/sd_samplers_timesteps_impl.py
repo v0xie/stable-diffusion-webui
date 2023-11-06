@@ -140,15 +140,12 @@ def unipc(model, x, timesteps, extra_args=None, callback=None, disable=None, is_
 # epsilon scaling
 # 2023, Authors:
 @torch.no_grad()
-def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, eta=0.0):
+def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, eta=0.0, s_es_k=0.0, s_es_b=1.0):
     alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
     alphas = alphas_cumprod[timesteps]
     alphas_prev = alphas_cumprod[torch.nn.functional.pad(timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
     sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
     sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
-
-    k = 0.0002
-    b = 1.0041
 
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones((x.shape[0]))
@@ -156,7 +153,7 @@ def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, e
     for i in tqdm.trange(len(timesteps) - 1, disable=disable):
         index = len(timesteps) - 1 - i
 
-        lambda_t = k*i + b
+        lambda_t = s_es_k * i + s_es_b
         e_t = model(x, timesteps[index].item() * s_in, **extra_args)
 
         a_t = alphas[index].item() * s_x

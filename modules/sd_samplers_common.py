@@ -236,6 +236,12 @@ class Sampler:
         self.eta_option_field = 'eta_ancestral'
         self.eta_infotext_field = 'Eta'
         self.eta_default = 1.0
+        self.s_es_k_option_field = 's_es_k'
+        self.s_es_k_infotext_field = 'Epsilon scaling k'
+        self.s_es_k_default = 0.0
+        self.s_es_b_option_field = 's_es_b'
+        self.s_es_b_infotext_field = 'Epsilon scaling b'
+        self.s_es_b_default = 1.0
 
         self.conditioning_key = shared.sd_model.model.conditioning_key
 
@@ -282,6 +288,8 @@ class Sampler:
         self.model_wrap_cfg.step = 0
         self.model_wrap_cfg.image_cfg_scale = getattr(p, 'image_cfg_scale', None)
         self.eta = p.eta if p.eta is not None else getattr(opts, self.eta_option_field, 0.0)
+        self.s_es_k = p.s_es_k if p.s_es_k is not None else getattr(opts, self.s_es_k_option_field, 0.0)
+        self.s_es_b = p.s_es_b if p.s_es_b is not None else getattr(opts, self.s_es_b_option_field, 1.0)
         self.s_min_uncond = getattr(p, 's_min_uncond', 0.0)
 
         k_diffusion.sampling.torch = TorchHijack(p)
@@ -296,6 +304,18 @@ class Sampler:
                 p.extra_generation_params[self.eta_infotext_field] = self.eta
 
             extra_params_kwargs['eta'] = self.eta
+
+        if 's_es_k' in inspect.signature(self.func).parameters:
+            if self.s_es_k != self.s_es_k_default:
+                p.extra_generation_params[self.s_es_k_infotext_field] = self.s_es_k
+
+            extra_params_kwargs['Epsilon scaling k'] = self.s_es_k
+
+        if 's_es_k' in inspect.signature(self.func).parameters:
+            if self.s_es_b != self.s_es_b_default:
+                p.extra_generation_params[self.s_es_b_infotext_field] = self.s_es_b
+
+            extra_params_kwargs['Epsilon scaling b'] = self.s_es_b
 
         if len(self.extra_params) > 0:
             s_churn = getattr(opts, 's_churn', p.s_churn)
