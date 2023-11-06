@@ -309,13 +309,13 @@ class Sampler:
             if self.s_es_k != self.s_es_k_default:
                 p.extra_generation_params[self.s_es_k_infotext_field] = self.s_es_k
 
-            extra_params_kwargs['Epsilon scaling k'] = self.s_es_k
+            extra_params_kwargs['s_es_k'] = self.s_es_k
 
         if 's_es_k' in inspect.signature(self.func).parameters:
             if self.s_es_b != self.s_es_b_default:
                 p.extra_generation_params[self.s_es_b_infotext_field] = self.s_es_b
 
-            extra_params_kwargs['Epsilon scaling b'] = self.s_es_b
+            extra_params_kwargs['s_es_b'] = self.s_es_b
 
         if len(self.extra_params) > 0:
             s_churn = getattr(opts, 's_churn', p.s_churn)
