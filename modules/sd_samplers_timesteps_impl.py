@@ -136,9 +136,8 @@ def unipc(model, x, timesteps, extra_args=None, callback=None, disable=None, is_
 
     return x
 
-# ELUCIDATING THE EXPOSURE BIAS IN DIFFUSION MODELS
-# epsilon scaling
-# 2023, Authors:
+# ELUCIDATING THE EXPOSURE BIAS IN DIFFUSION MODELS - arXiv:2308.15321v5 [cs.LG]
+# 2023, Authors: Mang Ning, Mingxiao Li, Jianlin Su, Albert Ali Salah, Itir Onal Ertugrul
 @torch.no_grad()
 def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, eta=0.0, s_es_k=0.0, s_es_b=1.0):
     alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
@@ -153,7 +152,7 @@ def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, e
     for i in tqdm.trange(len(timesteps) - 1, disable=disable):
         index = len(timesteps) - 1 - i
 
-        lambda_t = s_es_k * i + s_es_b
+        lambda_t = s_es_k * i + s_es_b # scale epsilon by this factor
         e_t = model(x, timesteps[index].item() * s_in, **extra_args)
 
         a_t = alphas[index].item() * s_x
