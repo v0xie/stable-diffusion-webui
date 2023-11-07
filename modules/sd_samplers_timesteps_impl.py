@@ -180,43 +180,92 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
 
     teacher_scale = 10
     teacher_steps = teacher_scale * len(timesteps)
-    teacher_timesteps = torch.clip(torch.asarray(list(range(0, 1000, 1000 // teacher_steps)), device=timesteps.device) + 1, 0, 999)
-    teacher_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
-    lambda_predictions = torch.zeros(teacher_timesteps.shape[0], device=x.device)
 
-    alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
-    alphas = alphas_cumprod[teacher_timesteps]
-    alphas_prev = alphas_cumprod[torch.nn.functional.pad(teacher_timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
-    sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
-    sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
+    if lambda_predictions is None or len(lambda_predictions) < teacher_scale * len(timesteps):
+        teacher_timesteps = torch.clip(torch.asarray(list(range(0, 1000, 1000 // teacher_steps)), device=timesteps.device) + 1, 0, 999)
+        teacher_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
+        lambda_predictions = torch.zeros(teacher_timesteps.shape[0], device=x.device)
 
-    extra_args = {} if extra_args is None else extra_args
-    s_in = x.new_ones((x.shape[0]))
-    s_x = x.new_ones((x.shape[0], 1, 1, 1))
-    lambda_t = 0.5 # optimized by distillation
-    e_t_prev = None
+        alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
+        alphas = alphas_cumprod[teacher_timesteps]
+        alphas_prev = alphas_cumprod[torch.nn.functional.pad(teacher_timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
+        sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
+        sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
 
-    #student_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
-    #student_steps = max(len(timesteps) - 1 - teacher_steps, 0) # T
+        extra_args = {} if extra_args is None else extra_args
+        s_in = x.new_ones((x.shape[0]))
+        s_x = x.new_ones((x.shape[0], 1, 1, 1))
+        lambda_t = 0.5 # optimized by distillation
+        e_t_prev = None
 
-    # teacher sampling - basic ddim
-    for i in tqdm.trange(teacher_steps - 1, disable=disable):
-        index = teacher_steps - 1 - i
+        #student_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
+        #student_steps = max(len(timesteps) - 1 - teacher_steps, 0) # T
 
-        e_t = model(x, teacher_timesteps[index].item() * s_in, **extra_args)
+        # teacher sampling - basic ddim
+        for i in tqdm.trange(teacher_steps - 1, disable=disable):
+            index = teacher_steps - 1 - i
 
-        a_t = alphas[index].item() * s_x
-        a_prev = alphas_prev[index].item() * s_x
-        sigma_t = sigmas[index].item() * s_x
-        sqrt_one_minus_at = sqrt_one_minus_alphas[index].item() * s_x
+            e_t = model(x, teacher_timesteps[index].item() * s_in, **extra_args)
 
-        pred_x0 = (x - sqrt_one_minus_at * e_t) / a_t.sqrt()
-        dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t
-        noise = sigma_t * k_diffusion.sampling.torch.randn_like(x)
-        x = a_prev.sqrt() * pred_x0 + dir_xt + noise
+            a_t = alphas[index].item() * s_x
+            a_prev = alphas_prev[index].item() * s_x
+            sigma_t = sigmas[index].item() * s_x
+            sqrt_one_minus_at = sqrt_one_minus_alphas[index].item() * s_x
 
-        teacher_predictions[index] = x
-    
+            pred_x0 = (x - sqrt_one_minus_at * e_t) / a_t.sqrt()
+            dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t
+            noise = sigma_t * k_diffusion.sampling.torch.randn_like(x)
+            x = a_prev.sqrt() * pred_x0 + dir_xt + noise
+
+            teacher_predictions[index] = x
+
+            if callback is not None:
+                callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
+        
+        alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
+        alphas = alphas_cumprod[timesteps]
+        alphas_prev = alphas_cumprod[torch.nn.functional.pad(timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
+        sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
+        sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
+        extra_args = {} if extra_args is None else extra_args
+        s_in = x.new_ones((x.shape[0]))
+        s_x = x.new_ones((x.shape[0], 1, 1, 1))
+        lambda_t = 0.5 # optimized by distillation
+        e_t_prev = None
+        # distillation
+        for i in tqdm.trange(len(timesteps) - 1, disable=disable):
+            index = len(timesteps) - 1 - i
+
+            e_t = model(x, timesteps[index].item() * s_in, **extra_args)
+
+            # use the initial prediction if it's the first iteration
+            if i == 0:
+                d_t = e_t
+                e_t_prev = e_t
+                c_t_prev = e_t # teacher prediction
+            else:
+            #    d_t = e_t + lambda_t * (e_t - e_t_prev)
+                c_t_prev = teacher_predictions[index * teacher_scale] # teacher prediction
+                # predict noise based on the current prediction and the previous prediction
+                # calculate lambda
+                lambda_t = torch.argmin(torch.pow(torch.linalg.norm(e_t - c_t_prev), 2.0))
+                lambda_predictions[index] = lambda_t
+                d_t = e_t + lambda_t * (e_t - e_t_prev)
+                e_t_prev = d_t
+
+            a_t = alphas[index].item() * s_x
+            a_prev = alphas_prev[index].item() * s_x
+            sigma_t = sigmas[index].item() * s_x
+            sqrt_one_minus_at = sqrt_one_minus_alphas[index].item() * s_x # 1 - a_t
+
+            pred_x0 = (x - sqrt_one_minus_at * d_t) / a_t.sqrt() # predicted x_0
+            dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t # direction pointing to x_t
+            noise = sigma_t * k_diffusion.sampling.torch.randn_like(x) # noise
+            x = a_prev.sqrt() * pred_x0 + dir_xt + noise # x_(t-1) | x_t, x_t(0)
+
+            if callback is not None:
+                callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
+
     alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
     alphas = alphas_cumprod[timesteps]
     alphas_prev = alphas_cumprod[torch.nn.functional.pad(timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
@@ -225,9 +274,9 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones((x.shape[0]))
     s_x = x.new_ones((x.shape[0], 1, 1, 1))
-    lambda_t = 0.5 # optimized by distillation
     e_t_prev = None
-    # distillation
+
+    # inference
     for i in tqdm.trange(len(timesteps) - 1, disable=disable):
         index = len(timesteps) - 1 - i
 
@@ -243,8 +292,7 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
             c_t_prev = teacher_predictions[index * teacher_scale] # teacher prediction
             # predict noise based on the current prediction and the previous prediction
             # calculate lambda
-            lambda_t = torch.argmin(torch.pow(torch.linalg.norm(e_t - c_t_prev), 2.0))
-            lambda_predictions[index] = lambda_t
+            lambda_t = lambda_predictions[index]
             d_t = e_t + lambda_t * (e_t - e_t_prev)
             e_t_prev = d_t
 
