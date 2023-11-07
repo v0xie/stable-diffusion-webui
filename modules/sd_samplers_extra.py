@@ -42,6 +42,9 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
             if steps >= 36:
                 restart_steps = steps // 4
                 restart_times = 2
+            if steps >= 50:
+                restart_steps = steps // 5
+                restart_times = 3
             sigmas = get_sigmas_karras(steps - restart_steps * restart_times, sigmas[-2].item(), sigmas[0].item(), device=sigmas.device)
             restart_list = {0.1: [restart_steps + 1, restart_times, 2]}
         else:

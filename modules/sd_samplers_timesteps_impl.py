@@ -170,13 +170,23 @@ def ts_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, e
 
     return x
 
+lambda_predictions = None
+
 # DISTILLING ODE SOLVERS OF DIFFUSION MODELS INTO SMALLER STEPS arXiv:2309.16421v1 [cs.CV] 
 # 2023, Authors: Sanghwan Kim, Hao Tang & Fisher Yu
 @torch.no_grad()
 def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None, eta=0.0, s_es_k=0.0, s_es_b=1.0):
+    global lambda_predictions
+
+    teacher_scale = 10
+    teacher_steps = teacher_scale * len(timesteps)
+    teacher_timesteps = torch.clip(torch.asarray(list(range(0, 1000, 1000 // teacher_steps)), device=timesteps.device) + 1, 0, 999)
+    teacher_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
+    lambda_predictions = torch.zeros(teacher_timesteps.shape[0], device=x.device)
+
     alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
-    alphas = alphas_cumprod[timesteps]
-    alphas_prev = alphas_cumprod[torch.nn.functional.pad(timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
+    alphas = alphas_cumprod[teacher_timesteps]
+    alphas_prev = alphas_cumprod[torch.nn.functional.pad(teacher_timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
     sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
     sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
 
@@ -186,17 +196,12 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
     lambda_t = 0.5 # optimized by distillation
     e_t_prev = None
 
-    teacher_scale = 10
-    teacher_steps = teacher_scale * len(timesteps)
-    teacher_timesteps = torch.clip(torch.asarray(list(range(0, 1000, 1000 // teacher_steps)), device=timesteps.device) + 1, 0, 999)
-    teacher_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
-    lambda_predictions = torch.zeros(teacher_timesteps.shape[0], device=x.device)
     #student_predictions = repeat(torch.ones_like(x, device=x.device), 'k ... -> m k ...', m = teacher_steps)
     #student_steps = max(len(timesteps) - 1 - teacher_steps, 0) # T
 
     # teacher sampling - basic ddim
-    for i in tqdm.trange(len(teacher_steps) - 1, disable=disable):
-        index = len(teacher_steps) - 1 - i
+    for i in tqdm.trange(teacher_steps - 1, disable=disable):
+        index = teacher_steps - 1 - i
 
         e_t = model(x, teacher_timesteps[index].item() * s_in, **extra_args)
 
@@ -212,6 +217,16 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
 
         teacher_predictions[index] = x
     
+    alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
+    alphas = alphas_cumprod[timesteps]
+    alphas_prev = alphas_cumprod[torch.nn.functional.pad(timesteps[:-1], pad=(1, 0))].to(torch.float64 if x.device.type != 'mps' else torch.float32)
+    sqrt_one_minus_alphas = torch.sqrt(1 - alphas)
+    sigmas = eta * np.sqrt((1 - alphas_prev.cpu().numpy()) / (1 - alphas.cpu()) * (1 - alphas.cpu() / alphas_prev.cpu().numpy()))
+    extra_args = {} if extra_args is None else extra_args
+    s_in = x.new_ones((x.shape[0]))
+    s_x = x.new_ones((x.shape[0], 1, 1, 1))
+    lambda_t = 0.5 # optimized by distillation
+    e_t_prev = None
     # distillation
     for i in tqdm.trange(len(timesteps) - 1, disable=disable):
         index = len(timesteps) - 1 - i
@@ -245,5 +260,3 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
 
         if callback is not None:
             callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
-
-    T
