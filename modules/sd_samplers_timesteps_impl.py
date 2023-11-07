@@ -217,10 +217,10 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
             noise = sigma_t * k_diffusion.sampling.torch.randn_like(x)
             x = a_prev.sqrt() * pred_x0 + dir_xt + noise
 
-            teacher_predictions[index] = x
+            teacher_predictions[i] = x
 
-            if callback is not None:
-                callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
+            #if callback is not None:
+            #    callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
         
         alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
         alphas = alphas_cumprod[timesteps]
@@ -233,10 +233,10 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
         lambda_t = 0.5 # optimized by distillation
         e_t_prev = None
         # distillation
-        for i in tqdm.trange(len(timesteps) - 1, disable=disable):
-            index = len(timesteps) - 1 - i
+        for i in tqdm.trange(teacher_steps - 1, disable=disable):
+            index = teacher_steps - 1 - i
 
-            e_t = model(x, timesteps[index].item() * s_in, **extra_args)
+            e_t = model(x, teacher_timesteps[index].item() * s_in, **extra_args)
 
             # use the initial prediction if it's the first iteration
             if i == 0:
@@ -245,11 +245,11 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
                 c_t_prev = e_t # teacher prediction
             else:
             #    d_t = e_t + lambda_t * (e_t - e_t_prev)
-                c_t_prev = teacher_predictions[index * teacher_scale] # teacher prediction
+                c_t_prev = teacher_predictions[index] # teacher prediction
                 # predict noise based on the current prediction and the previous prediction
                 # calculate lambda
                 lambda_t = torch.argmin(torch.pow(torch.linalg.norm(e_t - c_t_prev), 2.0))
-                lambda_predictions[index] = lambda_t
+                lambda_predictions[i] = lambda_t
                 d_t = e_t + lambda_t * (e_t - e_t_prev)
                 e_t_prev = d_t
 
@@ -263,8 +263,8 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
             noise = sigma_t * k_diffusion.sampling.torch.randn_like(x) # noise
             x = a_prev.sqrt() * pred_x0 + dir_xt + noise # x_(t-1) | x_t, x_t(0)
 
-            if callback is not None:
-                callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
+            #if callback is not None:
+            #    callback({'x': x, 'i': i, 'sigma': 0, 'sigma_hat': 0, 'denoised': pred_x0})
 
     alphas_cumprod = model.inner_model.inner_model.alphas_cumprod
     alphas = alphas_cumprod[timesteps]
