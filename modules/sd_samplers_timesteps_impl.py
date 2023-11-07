@@ -244,10 +244,10 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
 
 
         # distillation
-        for i in tqdm.trange(teacher_steps - 1, disable=disable):
-            index = teacher_steps - 1 - i
+        for i in tqdm.trange(len(timesteps) - 1, disable=disable):
+            index = len(timesteps) - 1 - i
 
-            e_t = model(x_copy, teacher_timesteps[index].item() * s_in, **extra_args)
+            e_t = model(x_copy, timesteps[index].item() * s_in, **extra_args)
 
             # use the initial prediction if it's the first iteration
             if i == 0:
@@ -256,20 +256,39 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
                 c_t_prev = e_t # teacher prediction
             else:
             #    d_t = e_t + lambda_t * (e_t - e_t_prev)
-                c_t_prev = teacher_predictions[i] # teacher prediction
+                c_t_prev = teacher_predictions[i * teacher_scale - 1] # teacher prediction
+                #for b in range(10):
                 # predict noise based on the current prediction and the previous prediction
 
                 # FIXME: calculate lambda - this is actually really incorrect
                 # should be solving for lambda_t
                 d0 = e_t - c_t_prev
+                #d0 = d0.flatten()
                 d0 = d0.pow(2.)
-                d0 = d0.flatten()
-                lambda_t = d0[torch.argmin(d0)]
+                d0 = d0.squeeze(0)
+                d0 = torch.linalg.matrix_norm(d0)
+                argmin_idx = torch.argmin(d0)
+                lambda_t = d0[argmin_idx]
                 #lambda_t = torch.argmin(torch.pow(torch.linalg.norm(e_t - c_t_prev), 2.0))
-                lambda_predictions[i] = lambda_t
 
-                d_t = e_t + lambda_t * (e_t - e_t_prev)
-                e_t_prev = d_t
+                #lambda_predictions[i] = lambda_t
+                lambda_predictions[i] = 0.5
+
+                    #d_t = e_t + 0.1 * (e_t - e_t_prev)
+                    ##d_t = e_t + lambda_t * (e_t - e_t_prev)
+                    #e_t_prev = d_t
+
+                    #e_t = model(x_copy, teacher_timesteps[index].item() * s_in, **extra_args)
+
+                    #a_t = alphas[index].item() * s_x
+                    #a_prev = alphas_prev[index].item() * s_x
+                    #sigma_t = sigmas[index].item() * s_x
+                    #sqrt_one_minus_at = sqrt_one_minus_alphas[index].item() * s_x # 1 - a_t
+
+                    #pred_x0 = (x_copy - sqrt_one_minus_at * d_t) / a_t.sqrt() # predicted x_0
+                    #dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t # direction pointing to x_t
+                    #noise = sigma_t * k_diffusion.sampling.torch.randn_like(x) # noise
+                    #x_copy = a_prev.sqrt() * pred_x0 + dir_xt + noise # x_(t-1) | x_t, x_t(0)
 
             a_t = alphas[index].item() * s_x
             a_prev = alphas_prev[index].item() * s_x
@@ -313,7 +332,8 @@ def d_ode_ddim(model, x, timesteps, extra_args=None, callback=None, disable=None
             #c_t_prev = teacher_predictions[index * teacher_scale] # teacher prediction
             # predict noise based on the current prediction and the previous prediction
             # calculate lambda
-            lambda_t = lambda_predictions[index]
+
+            lambda_t = lambda_predictions[i * teacher_scale - 1] # teacher prediction
             d_t = e_t + lambda_t * (e_t - e_t_prev)
             e_t_prev = d_t
 
