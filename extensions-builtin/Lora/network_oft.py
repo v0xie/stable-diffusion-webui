@@ -30,6 +30,9 @@ class NetworkModuleOFT(network.NetworkModule):
             #self.oft_blocks = rearrange(self.oft_blocks, 'k m ... -> (k m) ...')
         elif "oft_diag" in weights.w.keys():
             self.is_kohya = False
+
+            self.is_kohya = True # set to true for debug
+
             self.oft_blocks = weights.w["oft_diag"] # (num_blocks, block_size, block_size)
 
             # alpha is rank if alpha is 0 or None
@@ -53,8 +56,15 @@ class NetworkModuleOFT(network.NetworkModule):
             raise ValueError("sd_module must be Linear or Conv")
 
         if self.is_kohya:
-            self.constraint = self.alpha * self.out_dim
-            self.num_blocks, self.block_size = factorization(self.out_dim, self.dim)
+            try:
+                self.constraint = self.alpha * self.out_dim
+            except TypeError:
+                self.constraint = None
+            
+            # this is debug, num_blocks > block_size for kb
+            #self.num_blocks, self.block_size = factorization(self.out_dim, self.dim)
+            self.block_size, self.block_num = factorization(self.out_dim, self.dim)
+            self.num_blocks = self.block_num # TODO: rename block_num to num_blocks
         else:
             self.constraint = None
             self.block_size, self.num_blocks = factorization(self.out_dim, self.dim)
@@ -67,74 +77,108 @@ class NetworkModuleOFT(network.NetworkModule):
             weight = torch.einsum("oi, op -> pi", org_weight, R_weight)
         return weight
 
-    def get_weight(self, oft_blocks, multiplier=None):
+    def get_weight(self, oft_blocks, device, multiplier=None):
         if self.constraint is not None:
-            constraint = self.constraint.to(oft_blocks.device, dtype=oft_blocks.dtype)
+            constraint = self.constraint.to(device=device, dtype=oft_blocks.dtype)
 
-        block_Q = oft_blocks - oft_blocks.transpose(1, 2)
-        norm_Q = torch.norm(block_Q.flatten())
+        oft_blocks = oft_blocks.to(device, dtype=torch.float32)
+        m_I = torch.eye(self.block_size, device=device, dtype=torch.float32).unsqueeze(0).repeat(self.num_blocks, 1, 1)
+        #m_I = torch.eye(self.block_size, device=device, dtype=torch.float32)
+        #m_I = torch.eye(self.num_blocks, device=oft_blocks.device).unsqueeze(0).repeat(self.block_size, 1, 1)
+        q = oft_blocks - oft_blocks.transpose(1, 2)
+        q_norm = torch.norm(q.flatten())
+        #q_norm = torch.norm(q.flatten()) + 1e-8
+        #q_norm = torch.norm(q) + 1e-8
         if self.constraint is not None:
-            new_norm_Q = torch.clamp(norm_Q, max=constraint)
+            normed_q = torch.clamp(q_norm, max=constraint)
+            q_norm_clamped = torch.clamp(q_norm, max=constraint)
+            #normed_q = q * (constraint / q_norm)
         else:
-            new_norm_Q = norm_Q
-        block_Q = block_Q * ((new_norm_Q + 1e-8) / (norm_Q + 1e-8))
-        m_I = torch.eye(self.num_blocks, device=oft_blocks.device).unsqueeze(0).repeat(self.block_size, 1, 1)
-        #m_I = torch.eye(self.block_size, device=oft_blocks.device).unsqueeze(0).repeat(self.num_blocks, 1, 1)
-        block_R = torch.matmul(m_I + block_Q, (m_I - block_Q).inverse())
+            normed_q = q
+        normed_q = normed_q.to(device, dtype=torch.float32)
+        #block_Q = block_Q * ((normed_q + 1e-8) / (q + 1e-8))
+        #m_I = torch.eye(self.num_blocks, device=oft_blocks.device).unsqueeze(0).repeat(self.block_size, 1, 1)
+        #block_R = torch.matmul(m_I + normed_q , (m_I - normed_q).inverse())
+        R = torch.matmul(m_I + normed_q, (m_I - normed_q).inverse())
 
-        block_R_weighted = multiplier * block_R + (1 - multiplier) * m_I
+        block_R_weighted = multiplier * R + (1 - multiplier) * m_I
         R = torch.block_diag(*block_R_weighted)
         return R
 
     def calc_updown_kohya(self, orig_weight, multiplier):
-        R = self.get_weight(self.oft_blocks, multiplier)
-        merged_weight = self.merge_weight(R, orig_weight)
+        is_other_linear = type(self.sd_module) in [torch.nn.MultiheadAttention]
+        R = self.get_weight(self.oft_blocks, device=orig_weight.device, multiplier=multiplier)
+        #merged_weight = self.merge_weight(R, orig_weight)
+
+        # m_I = torch.eye(self.block_size, device=orig_weight.device, dtype=orig_weight.dtype)
+        # # if is_other_linear:
+        # #     orig_weight=orig_weight.permute(1, 0)
+        # merged_weight = rearrange(orig_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
+        # merged_weight = torch.einsum(
+        #     'k n m, k n ... -> k m ...',
+        #     R * multiplier + (1-multiplier) * m_I, merged_weight
+        # )
+        # merged_weight = rearrange(merged_weight, 'k m ... -> (k m) ...')
+
+        merged_weight = orig_weight
+        #if orig_weight.dim() == 4:
+        #    merged_weight = merged_weight.permute(0, 2, 3, 1)
+        #    merged_weight = torch.matmul(merged_weight, R)
+        #    merged_weight = merged_weight.permute(0, 3, 1, 2)
+        #else:
+        #    merged_weight = torch.matmul(merged_weight, R)
+
+        if orig_weight.dim() == 4:
+            merged_weight = torch.einsum("oihw, op -> pihw", orig_weight, R)
+        else:
+            merged_weight = torch.einsum("oi, op -> pi", orig_weight, R)
+        #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
+        #    orig_weight=orig_weight.permute(1, 0)
 
         updown = merged_weight.to(orig_weight.device, dtype=orig_weight.dtype) - orig_weight
         output_shape = orig_weight.shape
-        orig_weight = orig_weight
         return self.finalize_updown(updown, orig_weight, output_shape)
 
     def calc_updown_kb(self, orig_weight, multiplier):
         is_other_linear = type(self.sd_module) in [torch.nn.MultiheadAttention]
 
-        if not is_other_linear:
+        #if not is_other_linear:
             #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
             #    orig_weight=orig_weight.permute(1, 0)
 
-            oft_blocks = self.oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+        oft_blocks = self.oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
 
-            # without this line the results are significantly worse / less accurate
-            oft_blocks = oft_blocks - oft_blocks.transpose(1, 2)
+        # without this line the results are significantly worse / less accurate
+        oft_blocks = oft_blocks - oft_blocks.transpose(1, 2)
 
-            R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
-            R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
+        R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
+        R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
 
-            merged_weight = rearrange(orig_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
-            merged_weight = torch.einsum(
-                'k n m, k n ... -> k m ...',
-                R,
-                merged_weight
-            )
-            merged_weight = rearrange(merged_weight, 'k m ... -> (k m) ...')
+        merged_weight = rearrange(orig_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
+        merged_weight = torch.einsum(
+            'k n m, k n ... -> k m ...',
+            R,
+            merged_weight
+        )
+        merged_weight = rearrange(merged_weight, 'k m ... -> (k m) ...')
 
-            #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
-            #    orig_weight=orig_weight.permute(1, 0)
+        #if is_other_linear and orig_weight.shape[0] != orig_weight.shape[1]:
+        #    orig_weight=orig_weight.permute(1, 0)
 
-            updown = merged_weight.to(orig_weight.device, dtype=orig_weight.dtype) - orig_weight
-            output_shape = orig_weight.shape
-        else:
-            # FIXME: skip MultiheadAttention for now
-            #up = self.lin_module.weight.to(orig_weight.device, dtype=orig_weight.dtype)
-            updown = torch.zeros([orig_weight.shape[1], orig_weight.shape[1]], device=orig_weight.device, dtype=orig_weight.dtype)
-            output_shape = (orig_weight.shape[1], orig_weight.shape[1])
+        updown = merged_weight.to(orig_weight.device, dtype=orig_weight.dtype) - orig_weight
+        output_shape = orig_weight.shape
+        #else:
+        #    # FIXME: skip MultiheadAttention for now
+        #    #up = self.lin_module.weight.to(orig_weight.device, dtype=orig_weight.dtype)
+        #    updown = torch.zeros([orig_weight.shape[1], orig_weight.shape[1]], device=orig_weight.device, dtype=orig_weight.dtype)
+        #    output_shape = (orig_weight.shape[1], orig_weight.shape[1])
 
         return self.finalize_updown(updown, orig_weight, output_shape)
 
     def calc_updown(self, orig_weight):
         multiplier = self.multiplier() * self.calc_scale()
-        #if self.is_kohya:
-        #    return self.calc_updown_kohya(orig_weight, multiplier)
+        if self.is_kohya:
+            return self.calc_updown_kohya(orig_weight, multiplier)
         #else:
         return self.calc_updown_kb(orig_weight, multiplier)
 
