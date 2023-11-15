@@ -42,9 +42,10 @@ class NetworkModuleOFT(network.NetworkModule):
         constraint = self.constraint.to(oft_blocks.device, dtype=oft_blocks.dtype)
 
         block_Q = oft_blocks - oft_blocks.transpose(1, 2)
-        norm_Q = torch.norm(block_Q.flatten())
-        new_norm_Q = torch.clamp(norm_Q, max=constraint)
-        block_Q = block_Q * ((new_norm_Q + 1e-8) / (norm_Q + 1e-8))
+        # the weights if trained with constraint are already clamped 
+        # norm_Q = torch.norm(block_Q.flatten())
+        #new_norm_Q = torch.clamp(norm_Q, max=constraint)
+        #block_Q = block_Q * ((new_norm_Q + 1e-8) / (norm_Q + 1e-8))
         m_I = torch.eye(self.block_size, device=oft_blocks.device).unsqueeze(0).repeat(self.num_blocks, 1, 1)
         block_R = torch.matmul(m_I + block_Q, (m_I - block_Q).inverse())
 
@@ -54,7 +55,10 @@ class NetworkModuleOFT(network.NetworkModule):
         return R
 
     def calc_updown(self, orig_weight):
-        multiplier = self.multiplier() * self.calc_scale()
+        multiplier = self.multiplier()
+        # scale will be a very small number if the network was trained with constraint
+        # so we ignore it
+        #multiplier = self.multiplier() * self.calc_scale()
         R = self.get_weight(self.oft_blocks, multiplier)
         merged_weight = self.merge_weight(R, orig_weight)
 
