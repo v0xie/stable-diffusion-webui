@@ -11,8 +11,8 @@ class ModuleTypeOFT(network.ModuleType):
 
         return None
 
-# adapted from kohya-ss' implementation https://github.com/kohya-ss/sd-scripts/blob/main/networks/oft.py
-# and KohakuBlueleaf's implementation https://github.com/KohakuBlueleaf/LyCORIS/blob/dev/lycoris/modules/diag_oft.py
+# Supports both kohya-ss' implementation of COFT  https://github.com/kohya-ss/sd-scripts/blob/main/networks/oft.py
+# and KohakuBlueleaf's implementation of OFT/COFT https://github.com/KohakuBlueleaf/LyCORIS/blob/dev/lycoris/modules/diag_oft.py
 class NetworkModuleOFT(network.NetworkModule):
     def __init__(self,  net: network.Network, weights: network.NetworkWeights):
 
@@ -25,16 +25,18 @@ class NetworkModuleOFT(network.NetworkModule):
         if "oft_blocks" in weights.w.keys():
             self.is_kohya = True
             self.oft_blocks = weights.w["oft_blocks"] # (num_blocks, block_size, block_size)
-            self.alpha = weights.w["alpha"]
+            self.alpha = weights.w["alpha"] # alpha is constraint
             self.dim = self.oft_blocks.shape[0] # lora dim
+        # LyCORIS
         elif "oft_diag" in weights.w.keys():
             self.is_kohya = False
-            self.oft_blocks = weights.w["oft_diag"] 
+            self.oft_blocks = weights.w["oft_diag"]
+            # self.alpha is unused
             self.dim = self.oft_blocks.shape[1] # (num_blocks, block_size, block_size)
 
         is_linear = type(self.sd_module) in [torch.nn.Linear, torch.nn.modules.linear.NonDynamicallyQuantizableLinear]
         is_conv = type(self.sd_module) in [torch.nn.Conv2d]
-        is_other_linear = type(self.sd_module) in [torch.nn.MultiheadAttention]
+        is_other_linear = type(self.sd_module) in [torch.nn.MultiheadAttention] # unsupported
 
         if is_linear:
             self.out_dim = self.sd_module.out_features
@@ -42,12 +44,11 @@ class NetworkModuleOFT(network.NetworkModule):
             self.out_dim = self.sd_module.out_channels
         elif is_other_linear:
             self.out_dim = self.sd_module.embed_dim
-        else:
-            raise ValueError("sd_module must be Linear or Conv")
 
         if self.is_kohya:
             self.constraint = self.alpha * self.out_dim
-            self.num_blocks, self.block_size = factorization(self.out_dim, self.dim)
+            self.num_blocks = self.dim
+            self.block_size = self.out_dim // self.dim
         else:
             self.constraint = None
             self.block_size, self.num_blocks = factorization(self.out_dim, self.dim)
@@ -57,7 +58,7 @@ class NetworkModuleOFT(network.NetworkModule):
         oft_blocks = oft_blocks - oft_blocks.transpose(1, 2) # ensure skew-symmetric orthogonal matrix
 
         R = oft_blocks.to(orig_weight.device, dtype=orig_weight.dtype)
-        R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device) * (1-multiplier)
+        R = R * multiplier + torch.eye(self.block_size, device=orig_weight.device)
 
         # This errors out for MultiheadAttention, might need to be handled up-stream
         merged_weight = rearrange(orig_weight, '(k n) ... -> k n ...', k=self.num_blocks, n=self.block_size)
