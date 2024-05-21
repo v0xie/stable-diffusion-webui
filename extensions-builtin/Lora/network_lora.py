@@ -81,6 +81,11 @@ class NetworkModuleLora(network.NetworkModule):
         self.up_model.to(device=devices.device)
         self.down_model.to(device=devices.device)
 
-        return y + self.up_model(self.down_model(x)) * self.multiplier() * self.calc_scale()
+        delta = self.up_model(self.down_model(x))
+        if delta.shape != y.shape:
+            return y
+        else:
+
+            return y + delta * self.multiplier() * self.calc_scale()
 
 
