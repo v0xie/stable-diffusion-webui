@@ -173,7 +173,7 @@ def plms_cfgpp(model, x, timesteps, extra_args=None, callback=None, disable=None
 
         if len(old_eps) == 0:
             # Pseudo Improved Euler (2nd order)
-            x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t, index)
+            x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t, last_noise_uncond, index)
             e_t_next = model(x_prev, t_next, **extra_args)
             e_t_prime = (e_t + e_t_next) / 2
         elif len(old_eps) == 1:
