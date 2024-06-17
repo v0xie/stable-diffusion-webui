@@ -12,6 +12,7 @@ samplers_timesteps = [
     ('DDIM', sd_samplers_timesteps_impl.ddim, ['ddim'], {}),
     ('DDIM CFG++', sd_samplers_timesteps_impl.ddim_cfgpp, ['ddim_cfgpp'], {}),
     ('PLMS', sd_samplers_timesteps_impl.plms, ['plms'], {}),
+    ('PLMS CFG++', sd_samplers_timesteps_impl.plms_cfgpp, ['plms_cfgpp'], {}),
     ('UniPC', sd_samplers_timesteps_impl.unipc, ['unipc'], {}),
 ]
 
