@@ -176,6 +176,7 @@ def plms_cfgpp(model, x, timesteps, extra_args=None, callback=None, disable=None
             # Pseudo Improved Euler (2nd order)
             x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t, last_noise_uncond, index)
             e_t_next = model(x_prev, t_next, **extra_args)
+            last_noise_uncond = model.last_noise_uncond
             e_t_prime = (e_t + e_t_next) / 2
         elif len(old_eps) == 1:
             # 2nd order Pseudo Linear Multistep (Adams-Bashforth)
