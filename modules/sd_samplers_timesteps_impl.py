@@ -170,6 +170,7 @@ def plms_cfgpp(model, x, timesteps, extra_args=None, callback=None, disable=None
         t_next = timesteps[max(index - 1, 0)].item() * s_in
 
         e_t = model(x, ts, **extra_args)
+        last_noise_uncond = model.last_noise_uncond
 
         if len(old_eps) == 0:
             # Pseudo Improved Euler (2nd order)
@@ -186,7 +187,6 @@ def plms_cfgpp(model, x, timesteps, extra_args=None, callback=None, disable=None
             # 4nd order Pseudo Linear Multistep (Adams-Bashforth)
             e_t_prime = (55 * e_t - 59 * old_eps[-1] + 37 * old_eps[-2] - 9 * old_eps[-3]) / 24
 
-        last_noise_uncond = model.last_noise_uncond
         x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t_prime, last_noise_uncond, index)
 
         old_eps.append(e_t)
