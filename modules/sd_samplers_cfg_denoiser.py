@@ -288,7 +288,8 @@ class CFGDenoiser(torch.nn.Module):
         elif skip_uncond:
             denoised = self.combine_denoised(x_out, conds_list, uncond, 1.0)
         elif is_cfg_pp_dpm:
-            denoised = self.combine_denoised(x_out, conds_list, uncond, cond_scale/6.25) # CFG++ scale of (0, 1) maps to (1.0, 12.5)
+            dpm_cfg = (cond_scale / 1 ** 2) # why??
+            denoised = self.combine_denoised(x_out, conds_list, uncond, dpm_cfg) # CFG++ scale of (0, 1) maps to (1.0, 12.5)
         elif is_cfg_pp:
             denoised = self.combine_denoised(x_out, conds_list, uncond, cond_scale/12.5) # CFG++ scale of (0, 1) maps to (1.0, 12.5)
         else:
