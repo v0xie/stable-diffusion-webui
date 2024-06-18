@@ -163,6 +163,8 @@ class CFGDenoiser(torch.nn.Module):
         is_edit_model = shared.sd_model.cond_stage_key == "edit" and self.image_cfg_scale is not None and self.image_cfg_scale != 1.0
 
         is_cfg_pp = 'CFG++' in self.sampler.config.name
+        is_cfg_pp_dpm = is_cfg_pp and 'DPM' in self.sampler.config.name
+        #is_cfg_pp = 'CFG++' in self.sampler.config.name and "DPM" not in self.sampler.config.name
 
         conds_list, tensor = prompt_parser.reconstruct_multicond_batch(cond, self.step)
         uncond = prompt_parser.reconstruct_cond_batch(uncond, self.step)
@@ -285,6 +287,8 @@ class CFGDenoiser(torch.nn.Module):
             denoised = self.combine_denoised_for_edit_model(x_out, cond_scale)
         elif skip_uncond:
             denoised = self.combine_denoised(x_out, conds_list, uncond, 1.0)
+        elif is_cfg_pp_dpm:
+            denoised = self.combine_denoised(x_out, conds_list, uncond, cond_scale/6.25) # CFG++ scale of (0, 1) maps to (1.0, 12.5)
         elif is_cfg_pp:
             denoised = self.combine_denoised(x_out, conds_list, uncond, cond_scale/12.5) # CFG++ scale of (0, 1) maps to (1.0, 12.5)
         else:
