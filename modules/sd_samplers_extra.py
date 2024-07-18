@@ -73,13 +73,12 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
 
     return x
 
-
 @torch.no_grad()
 def sample_dpmpp_2m_cfgpp(model, x, sigmas, extra_args=None, callback=None, disable=None):
     """DPM-Solver++(2M) CFG++. 
     Modified from https://github.com/crowsonkb/k-diffusion/blob/master/k_diffusion/sampling.py
     """
-    model.cond_scale_miltiplier = 1 / 12.5
+    model.cond_scale_miltiplier = 3/5
     model.need_last_noise_uncond = True
 
     extra_args = {} if extra_args is None else extra_args
