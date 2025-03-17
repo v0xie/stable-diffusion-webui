@@ -282,6 +282,7 @@ axis_options = [
     AxisOption("RNG source", str, apply_override("randn_source"), choices=lambda: ["GPU", "CPU", "NV"]),
     AxisOption("FP8 mode", str, apply_override("fp8_storage"), cost=0.9, choices=lambda: ["Disable", "Enable for SDXL", "Enable"]),
     AxisOption("Size", str, apply_size),
+    AxisOption("PLADIS Scale", float, apply_override('pladis_scale')),
 ]
 
 
