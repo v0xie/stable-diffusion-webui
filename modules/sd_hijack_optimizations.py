@@ -573,7 +573,7 @@ def scaled_dot_product_no_mem_attention_forward(self, x, context=None, mask=None
 def entmax_scaled_dot_product_no_mem_attention_forward(self, x, context=None, mask=None, **kwargs):
     with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False):
         # entmax attention doesn't work with self-attn (attn1) modules
-        if context is None: 
+        if context is None:
             return scaled_dot_product_attention_forward(self, x, context, mask)
         return entmax_scaled_dot_product_attention_forward(self, x, context, mask)
 
@@ -810,7 +810,7 @@ def entmax_scaled_dot_product_attention(query, key, value, attn_mask=None, dropo
     return attn_weight
 
 
-# Based on deep-spin's implementation of entmax from https://github.com/deep-spin/entmax 
+# Based on deep-spin's implementation of entmax from https://github.com/deep-spin/entmax
 # Code is under MIT License available in the Licenses section of the web UI interface
 def _make_ix_like(X, dim):
     d = X.size(dim)
