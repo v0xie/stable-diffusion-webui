@@ -12,6 +12,8 @@ from einops import rearrange
 from modules import shared, errors, devices, sub_quadratic_attention
 from modules.hypernetworks import hypernetwork
 
+from entmax import entmax15
+
 import ldm.modules.attention
 import ldm.modules.diffusionmodules.model
 
@@ -143,10 +145,27 @@ class SdOptimizationDoggettx(SdOptimization):
         sgm.modules.diffusionmodules.model.AttnBlock.forward = cross_attention_attnblock_forward
 
 
+class SdOptimizationSdpNoMemEntmax(SdOptimization):
+    name = "sdp-no-mem-entmax"
+    label = "scaled dot product without memory efficient attention and entmax attention"
+    cmd_opt = "opt_sdp_no_mem_attention_entmax"
+    priority = 80
+
+    def is_available(self):
+        return hasattr(torch.nn.functional, "scaled_dot_product_attention") and callable(torch.nn.functional.scaled_dot_product_attention)
+
+    def apply(self):
+        ldm.modules.attention.CrossAttention.forward = entmax_scaled_dot_product_no_mem_attention_forward
+        ldm.modules.diffusionmodules.model.AttnBlock.forward = sdp_no_mem_attnblock_forward
+        sgm.modules.attention.CrossAttention.forward = entmax_scaled_dot_product_no_mem_attention_forward
+        sgm.modules.diffusionmodules.model.AttnBlock.forward = sdp_no_mem_attnblock_forward
+
+
 def list_optimizers(res):
     res.extend([
         SdOptimizationXformers(),
         SdOptimizationSdpNoMem(),
+        SdOptimizationSdpNoMemEntmax(),
         SdOptimizationSdp(),
         SdOptimizationSubQuad(),
         SdOptimizationV1(),
@@ -551,6 +570,14 @@ def scaled_dot_product_no_mem_attention_forward(self, x, context=None, mask=None
         return scaled_dot_product_attention_forward(self, x, context, mask)
 
 
+def entmax_scaled_dot_product_no_mem_attention_forward(self, x, context=None, mask=None, **kwargs):
+    with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False):
+        # entmax attention doesn't work with self-attn (attn1) modules
+        if context is None: 
+            return scaled_dot_product_attention_forward(self, x, context, mask)
+        return entmax_scaled_dot_product_attention_forward(self, x, context, mask)
+
+
 def cross_attention_attnblock_forward(self, x):
         h_ = x
         h_ = self.norm(h_)
@@ -654,11 +681,39 @@ def sdp_attnblock_forward(self, x):
     out = self.proj_out(out)
     return x + out
 
+def entmax_sdp_attnblock_forward(self, x):
+    h_ = x
+    h_ = self.norm(h_)
+    q = self.q(h_)
+    k = self.k(h_)
+    v = self.v(h_)
+    b, c, h, w = q.shape
+    q, k, v = (rearrange(t, 'b c h w -> b (h w) c') for t in (q, k, v))
+    dtype = q.dtype
+    if shared.opts.upcast_attn:
+        q, k, v = q.float(), k.float(), v.float()
+    q = q.contiguous()
+    k = k.contiguous()
+    v = v.contiguous()
+
+    out = entmax_scaled_dot_product_attention(
+        q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False
+    )
+    #out = torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
+    out = out.to(dtype)
+    out = rearrange(out, 'b (h w) c -> b c h w', h=h)
+    out = self.proj_out(out)
+    return x + out
+
 
 def sdp_no_mem_attnblock_forward(self, x):
     with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False):
         return sdp_attnblock_forward(self, x)
 
+
+def entmax_sdp_no_mem_attnblock_forward(self, x):
+    with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False):
+        return entmax_sdp_attnblock_forward(self, x)
 
 def sub_quad_attnblock_forward(self, x):
     h_ = x
@@ -675,3 +730,80 @@ def sub_quad_attnblock_forward(self, x):
     out = rearrange(out, 'b (h w) c -> b c h w', h=h)
     out = self.proj_out(out)
     return x + out
+
+
+# Based on Diffusers usage of scaled dot product attention from https://github.com/huggingface/diffusers/blob/c7da8fd23359a22d0df2741688b5b4f33c26df21/src/diffusers/models/cross_attention.py
+# The scaled_dot_product_attention_forward function contains parts of code under Apache-2.0 license listed under Scaled Dot Product Attention in the Licenses section of the web UI interface
+def entmax_scaled_dot_product_attention_forward(self, x, context=None, mask=None, **kwargs):
+    batch_size, sequence_length, inner_dim = x.shape
+
+    if mask is not None:
+        mask = self.prepare_attention_mask(mask, sequence_length, batch_size)
+        mask = mask.view(batch_size, self.heads, -1, mask.shape[-1])
+
+    h = self.heads
+    q_in = self.to_q(x)
+    context = default(context, x)
+
+    context_k, context_v = hypernetwork.apply_hypernetworks(shared.loaded_hypernetworks, context)
+    k_in = self.to_k(context_k)
+    v_in = self.to_v(context_v)
+
+    head_dim = inner_dim // h
+    q = q_in.view(batch_size, -1, h, head_dim).transpose(1, 2)
+    k = k_in.view(batch_size, -1, h, head_dim).transpose(1, 2)
+    v = v_in.view(batch_size, -1, h, head_dim).transpose(1, 2)
+
+    del q_in, k_in, v_in
+
+    dtype = q.dtype
+    if shared.opts.upcast_attn:
+        q, k, v = q.float(), k.float(), v.float()
+
+    # the output of sdp = (batch, num_heads, seq_len, head_dim)
+    hidden_states = entmax_scaled_dot_product_attention(
+        q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False
+    )
+
+    hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, h * head_dim)
+    hidden_states = hidden_states.to(dtype)
+
+    # linear proj
+    hidden_states = self.to_out[0](hidden_states)
+    # dropout
+    hidden_states = self.to_out[1](hidden_states)
+    return hidden_states
+
+
+# modified from https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+def entmax_scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
+        is_causal=False, scale=None, enable_gqa=False) -> torch.Tensor:
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+    attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
+    if is_causal:
+        assert attn_mask is None
+        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias.to(query.dtype)
+
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        else:
+            attn_bias = attn_mask + attn_bias
+
+    if enable_gqa:
+        key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
+        value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+
+    attn_weight = query @ key.transpose(-2, -1) * scale_factor
+    attn_weight += attn_bias
+
+    # From "PLADIS: Pushing the Limits of Attention in Diffusion Models at Inference Time by Leveraging Sparsity" (2025) by Kim et. al.
+    coeff = 2.0
+    attn_weight_orig = torch.softmax(attn_weight, dim=-1) @ value
+    attn_weight_ent = entmax15(attn_weight, dim=-1) @ value
+    attn_weight = attn_weight_orig + coeff * (attn_weight_ent - attn_weight_orig)
+
+    return attn_weight
