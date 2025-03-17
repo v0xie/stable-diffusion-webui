@@ -243,7 +243,7 @@ options_templates.update(options_section(('optimizations', "Optimizations", "sd"
     "batch_cond_uncond": OptionInfo(True, "Batch cond/uncond").info("do both conditional and unconditional denoising in one batch; uses a bit more VRAM during sampling, but improves speed; previously this was controlled by --always-batch-cond-uncond commandline argument"),
     "fp8_storage": OptionInfo("Disable", "FP8 weight", gr.Radio, {"choices": ["Disable", "Enable for SDXL", "Enable"]}).info("Use FP8 to store Linear/Conv layers' weight. Require pytorch>=2.1.0."),
     "cache_fp16_weight": OptionInfo(False, "Cache FP16 weight for LoRA").info("Cache fp16 weight when enabling FP8, will increase the quality of LoRA. Use more system ram."),
-    "pladis_scale": OptionInfo(0.0, "PLADIS scale", gr.Slider, {"minimum": 0.0, "maximum": 5.0, "step": 0.01}, infotext='PLADIS scale').info("control strength of PLADIS scale when using entmax attention. values <= 1 will be ignored"),
+    "pladis_scale": OptionInfo(1.0, "PLADIS scale", gr.Slider, {"minimum": 0.0, "maximum": 5.0, "step": 0.01}, infotext='PLADIS scale').info("control strength of PLADIS scale when using entmax attention. values from 0.0 to 2.0 are recommended"),
 }))
 
 options_templates.update(options_section(('compatibility', "Compatibility", "sd"), {
