@@ -777,9 +777,10 @@ def entmax_scaled_dot_product_attention_forward(self, x, context=None, mask=None
 
 # modified from https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
 def entmax_scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
-        is_causal=False, scale=None, enable_gqa=False) -> torch.Tensor:
+        is_causal=False, enable_gqa=False) -> torch.Tensor:
     L, S = query.size(-2), key.size(-2)
-    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+    temperature = shared.opts.entmax_attn_temp if shared.opts.entmax_attn_temp else 1.0
+    scale_factor = 1 / (math.sqrt(query.size(-1)) * temperature)
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
     if is_causal:
         assert attn_mask is None
@@ -805,7 +806,7 @@ def entmax_scaled_dot_product_attention(query, key, value, attn_mask=None, dropo
     attn_weight_orig = torch.softmax(attn_weight, dim=-1) @ value
     attn_weight_ent = entmax15(attn_weight, dim=-1) @ value
 
-    attn_weight = attn_weight_orig + coeff * (attn_weight_ent - attn_weight_orig)
+    attn_weight = attn_weight_ent + coeff * (attn_weight_ent - attn_weight_orig)
 
     return attn_weight
 
