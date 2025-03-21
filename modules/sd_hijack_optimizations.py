@@ -804,9 +804,10 @@ def entmax_scaled_dot_product_attention(query, key, value, attn_mask=None, dropo
     # From "PLADIS: Pushing the Limits of Attention in Diffusion Models at Inference Time by Leveraging Sparsity" (2025) by Kim et. al.
     coeff = shared.opts.pladis_scale
     attn_weight_orig = torch.softmax(attn_weight, dim=-1) @ value
+    if coeff == 0:
+        return attn_weight_orig
     attn_weight_ent = entmax15(attn_weight, dim=-1) @ value
-
-    attn_weight = attn_weight_ent + coeff * (attn_weight_ent - attn_weight_orig)
+    attn_weight = attn_weight_ent + coeff * (attn_weight_orig - attn_weight_ent)
 
     return attn_weight
 
